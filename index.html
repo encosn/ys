@@ -687,9 +687,12 @@ function judge(target, read){
   return {mark: tight(target) === tight(read) ? 'o' : 'x', why:''};
 }
 
+/* 모음은 획 하나로 갈린다(ㅐ와 ㅔ, ㅔ와 ㅖ). 너무 줄이면 그 획이 뭉개져 잘못 읽는다. */
+let PHOTO_MAX_PX = 1600;
+
 async function toBase64Jpeg(file){
   const img = await createImageBitmap(file, {imageOrientation:'from-image'});
-  const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+  const scale = Math.min(1, PHOTO_MAX_PX / Math.max(img.width, img.height));
   const cv = document.createElement('canvas');
   cv.width = Math.round(img.width*scale);
   cv.height = Math.round(img.height*scale);

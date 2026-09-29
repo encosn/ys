@@ -187,8 +187,20 @@ button{font-family:inherit;cursor:pointer;border:none;}
   box-shadow:0 6px 0 #4571cc,0 12px 22px rgba(69,113,204,.25);
 }
 .photo-btn:active{transform:translateY(4px);box-shadow:0 2px 0 #4571cc;}
-.photo-btn[disabled]{background:#cfd6e4;box-shadow:0 6px 0 #aab3c4;cursor:default;}
+.photo-btn.alt{background:linear-gradient(180deg,#ffc978,#ff9f2e);box-shadow:0 6px 0 #d77b00,0 12px 22px rgba(215,123,0,.22);}
+.photo-btn.alt:active{box-shadow:0 2px 0 #d77b00;}
+.photo-btn[disabled],.photo-btn.alt[disabled]{background:#cfd6e4;box-shadow:0 6px 0 #aab3c4;cursor:default;}
+.photo-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;}
 .photo-state{font-size:17px;color:var(--text-sub);margin:10px 0 0;}
+.bar{
+  height:20px;background:#ece3f4;border-radius:999px;overflow:hidden;
+  margin:16px auto 0;max-width:440px;
+}
+.bar-fill{
+  height:100%;width:0;border-radius:999px;
+  background:linear-gradient(90deg,#8fb8ff,#5c8df0);
+  transition:width .35s ease;
+}
 .read{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
 .read .lab{font-size:15px;color:var(--text-mute);}
 .read .w{padding:3px 9px;border-radius:9px;background:#eef7ff;font-size:19px;}
@@ -221,6 +233,11 @@ footer{text-align:center;color:var(--text-mute);font-size:15px;margin-top:40px;}
     <span class="set-lab">🔊 읽어 주는 목소리</span>
     <div class="voice-btns" id="voiceBtns"></div>
     <p class="set-hint">단추를 누르면 그 목소리를 바로 들어 볼 수 있어요.</p>
+  </div>
+  <div class="setting-card hidden" id="quickPhotoCard">
+    <span class="set-lab">📷 이미 공책에 썼다면</span>
+    <p class="set-hint">듣기를 하지 않고, 회차를 골라 사진만 올려 채점할 수 있어요.</p>
+    <div class="voice-btns" id="quickRounds"></div>
   </div>
   <div class="rounds" id="roundList"></div>
   <footer>모든 것은 브라우저 안에서만 움직이고, 아무 기록도 저장하지 않아요.</footer>
@@ -263,9 +280,14 @@ footer{text-align:center;color:var(--text-mute);font-size:15px;margin-top:40px;}
     </div>
     <div class="photo-card hidden" id="photoCard">
       <span class="set-lab">📷 공책 사진으로 채점하기</span>
-      <input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden">
-      <div><button class="photo-btn" id="photoBtn">사진 고르기</button></div>
+      <input type="file" id="photoShot" accept="image/*" capture="environment" class="hidden">
+      <input type="file" id="photoPick" accept="image/*" class="hidden">
+      <div class="photo-btns">
+        <button class="photo-btn" id="photoShotBtn">📷 사진 찍기</button>
+        <button class="photo-btn alt" id="photoPickBtn">🖼️ 앨범에서 고르기</button>
+      </div>
       <p class="set-hint">번호 차례대로 쓴 열 줄이 모두 보이게 찍어요.<br>사진은 글씨를 읽는 동안만 AI에게 보내요. 이름과 얼굴은 나오지 않게 찍어 주세요.</p>
+      <div class="bar hidden" id="photoBar"><div class="bar-fill" id="photoFill"></div></div>
       <p class="photo-state" id="photoState"></p>
     </div>
     <div id="ansList"></div>
@@ -536,8 +558,19 @@ function showAnswers(){
   updateScore();
   document.getElementById('photoCard').classList.toggle('hidden', !OCR_SERVER);
   document.getElementById('photoState').textContent = '';
-  document.getElementById('photoInput').value = '';
+  document.getElementById('photoBar').classList.add('hidden');
+  document.getElementById('photoShot').value = '';
+  document.getElementById('photoPick').value = '';
   show('screen-answer');
+}
+
+/* 듣기를 건너뛰고 사진만 올려 채점하는 길. 아이는 시험지 차례대로 썼을 테니 순서를 섞지 않는다. */
+function startPhotoOnly(n){
+  stopSound();
+  currentRound = ROUNDS.find(r => r.n === n);
+  order = currentRound.items.map((t, i) => ({text:t, no:i + 1}));
+  marks = new Array(order.length).fill(null);
+  showAnswers();
 }
 
 function updateScore(){
@@ -635,11 +668,33 @@ async function toBase64Jpeg(file){
   return btoa(bin);
 }
 
+/* 얼마나 걸릴지 미리 알 수 없어, 기다리는 동안 게이지를 천천히 채우다가 끝나면 100%로 맞춘다. */
+let barTimer = null;
+function barStart(){
+  const state = document.getElementById('photoState');
+  const fill = document.getElementById('photoFill');
+  document.getElementById('photoBar').classList.remove('hidden');
+  let p = 0;
+  fill.style.width = '0%';
+  state.textContent = '사진을 살펴보는 중이에요... 0%';
+  clearInterval(barTimer);
+  barTimer = setInterval(() => {
+    p += (94 - p) * 0.12;
+    fill.style.width = p.toFixed(1) + '%';
+    state.textContent = `사진을 살펴보는 중이에요... ${Math.round(p)}%`;
+  }, 300);
+}
+function barEnd(){
+  clearInterval(barTimer);
+  document.getElementById('photoFill').style.width = '100%';
+  setTimeout(() => document.getElementById('photoBar').classList.add('hidden'), 700);
+}
+
 async function gradePhoto(file){
   const state = document.getElementById('photoState');
-  const btn = document.getElementById('photoBtn');
-  btn.disabled = true;
-  state.textContent = '사진을 살펴보는 중이에요...';
+  const buttons = [document.getElementById('photoShotBtn'), document.getElementById('photoPickBtn')];
+  buttons.forEach(b => b.disabled = true);
+  barStart();
   try{
     const data = await toBase64Jpeg(file);
     const res = await fetch(OCR_SERVER, {
@@ -661,13 +716,15 @@ async function gradePhoto(file){
     });
     paintMarks();
     updateScore();
+    barEnd();
     state.textContent = found === order.length
       ? '다 읽었어요. 잘못 본 곳이 있으면 ⭕❌ 를 눌러 고쳐 주세요.'
       : `열 줄 가운데 ${found}줄을 찾았어요. 못 찾은 줄은 직접 채점해 주세요.`;
   }catch(e){
+    barEnd();
     state.textContent = '채점하지 못했어요 — ' + e.message;
   }
-  btn.disabled = false;
+  buttons.forEach(b => b.disabled = false);
 }
 
 function showRead(i, read, why){
@@ -705,12 +762,25 @@ document.addEventListener('keydown', e => {
   if(e.code === 'Enter' || e.code === 'ArrowRight'){ e.preventDefault(); nextQ(); }
 });
 
-document.getElementById('photoBtn').onclick =
-  () => document.getElementById('photoInput').click();
-document.getElementById('photoInput').onchange = e => {
-  const f = e.target.files[0];
-  if(f) gradePhoto(f);
-};
+[['photoShotBtn','photoShot'], ['photoPickBtn','photoPick']].forEach(([btn, input]) => {
+  document.getElementById(btn).onclick = () => document.getElementById(input).click();
+  document.getElementById(input).onchange = e => {
+    const f = e.target.files[0];
+    if(f) gradePhoto(f);
+  };
+});
+
+if(OCR_SERVER){
+  const box = document.getElementById('quickRounds');
+  ROUNDS.forEach(r => {
+    const b = document.createElement('button');
+    b.className = 'voice-btn';
+    b.textContent = r.n + '회';
+    b.onclick = () => startPhotoOnly(r.n);
+    box.appendChild(b);
+  });
+  document.getElementById('quickPhotoCard').classList.remove('hidden');
+}
 
 buildHome();
 drawRateButtons();

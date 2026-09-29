@@ -3,8 +3,12 @@
 
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 const FORMATS = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
-// 앞에서부터 쓰고, 그 모델이 붐비면 다음 모델로 넘어간다.
-const DEFAULT_MODELS = 'gemini-3.5-flash,gemini-2.5-flash,gemini-3.5-flash-lite';
+// 앞에서부터 쓰고, 그 모델이 붐비거나 늦으면 다음 모델로 넘어간다.
+const DEFAULT_MODELS = 'gemini-3.5-flash-lite,gemini-3.5-flash,gemini-3.8-flash';
+// 한 모델을 이 시간까지만 기다린다. 다 합쳐도 클라우드플레어가 끊는 시간 안에 들어와야 한다.
+const MODEL_TIMEOUT_MS = 20000;
+// 붐비거나(503) 잠시 탈이 났거나(500) 그 이름이 사라졌으면(404) 다음 모델로 넘어간다.
+const TRY_NEXT = [500, 503, 404];
 
 // 아이가 틀리게 쓴 글자를 AI가 알아서 고쳐 버리면 채점이 뜻을 잃는다.
 // 그래서 '보이는 그대로' 옮기라는 점을 거듭 못박는다.
@@ -84,18 +88,28 @@ export default {
       }
     });
 
-    let res;
+    let res = null;
+    let lateOrBusy = false;
     for (const model of models) {
       try {
         res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_KEY },
-          body: payload
+          body: payload,
+          signal: AbortSignal.timeout(MODEL_TIMEOUT_MS)
         });
       } catch {
-        return reply({ error: 'AI 서버에 연결하지 못했습니다.' }, 502, cors);
+        // 시간 안에 답이 없으면 다음 모델로 넘어간다.
+        res = null;
+        lateOrBusy = true;
+        continue;
       }
-      if (res.ok || (res.status !== 503 && res.status !== 500)) break;
+      if (res.ok || !TRY_NEXT.includes(res.status)) break;
+      lateOrBusy = true;
+    }
+
+    if (!res) {
+      return reply({ error: lateOrBusy ? 'AI가 너무 오래 걸려요. 잠시 뒤에 다시 해 보세요.' : 'AI 서버에 연결하지 못했습니다.' }, 502, cors);
     }
 
     if (!res.ok) {

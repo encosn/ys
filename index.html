@@ -206,6 +206,12 @@ button{font-family:inherit;cursor:pointer;border:none;}
 .read .w{padding:3px 9px;border-radius:9px;background:#eef7ff;font-size:19px;}
 .read .w.bad{background:#ffe0e0;color:#c23b3b;}
 .read .miss{font-size:17px;color:var(--text-mute);}
+.leftover{
+  margin-top:14px;padding:14px 16px;background:#fff7e6;border-radius:var(--radius-sm);
+  display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;
+}
+.leftover .lab{width:100%;font-size:15px;color:#9a7b2f;}
+.left-line{background:#fff;border-radius:10px;padding:5px 12px;font-size:19px;}
 .end-btns{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px;}
 .end-btns button{
   flex:1 1 200px;border-radius:var(--radius-sm);padding:20px;
@@ -289,6 +295,7 @@ footer{text-align:center;color:var(--text-mute);font-size:15px;margin-top:40px;}
       <p class="set-hint">번호 차례대로 쓴 열 줄이 모두 보이게 찍어요.<br>사진은 글씨를 읽는 동안만 AI에게 보내요. 이름과 얼굴은 나오지 않게 찍어 주세요.</p>
       <div class="bar hidden" id="photoBar"><div class="bar-fill" id="photoFill"></div></div>
       <p class="photo-state" id="photoState"></p>
+      <div class="leftover hidden" id="photoLeft"></div>
     </div>
     <div id="ansList"></div>
     <div class="end-btns">
@@ -559,6 +566,7 @@ function showAnswers(){
   document.getElementById('photoCard').classList.toggle('hidden', !OCR_SERVER);
   document.getElementById('photoState').textContent = '';
   document.getElementById('photoBar').classList.add('hidden');
+  document.getElementById('photoLeft').classList.add('hidden');
   document.getElementById('photoShot').value = '';
   document.getElementById('photoPick').value = '';
   show('screen-answer');
@@ -620,7 +628,13 @@ function sim(a,b){
   return 1 - lev(a,b)/Math.max(a.length,b.length);
 }
 
-/* 문장 차례는 그대로 두고, 사진에서 읽은 줄을 가장 비슷한 문장에 맞춰 붙인다. */
+/* 아이는 1번부터 차례대로 썼으니, 읽어 온 줄 수가 문장 수와 같으면 그대로 순서대로 짝짓는다.
+   줄 수가 어긋날 때만 비슷한 정도를 따져 맞춘다. */
+function matchLines(targets, lines){
+  if(lines.length === targets.length) return lines.map(stripNo);
+  return alignLines(targets, lines);
+}
+
 function alignLines(targets, lines){
   const T=targets.length, L=lines.length;
   const s = targets.map(t => lines.map(l => sim(tight(t), tight(stripNo(l)))));
@@ -636,19 +650,26 @@ function alignLines(targets, lines){
     }
   }
   const out = new Array(T).fill(null);
+  const used = new Array(L).fill(false);
   let i=T, j=L;
   while(i>0 && j>0){
     const f = from[i][j];
-    if(f==='p'){ if(s[i-1][j-1] > 0.3) out[i-1] = stripNo(lines[j-1]); i--; j--; }
+    if(f==='p'){
+      // 글씨가 흐리면 닮은 정도가 낮게 나온다. 웬만하면 버리지 말고 짝지어 보여 준다.
+      if(s[i-1][j-1] > 0.15){ out[i-1] = stripNo(lines[j-1]); used[j-1] = true; }
+      i--; j--;
+    }
     else if(f==='l'){ j--; }
     else { i--; }
   }
+  out.leftover = lines.filter((_, k) => !used[k]).map(stripNo);
   return out;
 }
 
 /* 부호는 너그럽게, 띄어쓰기는 보고 채점한다. */
 function judge(target, read){
   if(read === null) return {mark:null, why:'사진에서 이 줄을 찾지 못했어요'};
+  if(read === '?') return {mark:null, why:'글씨를 알아보지 못했어요'};
   if(norm(target) === norm(read)) return {mark:'o', why:''};
   if(tight(target) === tight(read)) return {mark:'x', why:'띄어쓰기가 달라요'};
   return {mark:'x', why:''};
@@ -706,20 +727,21 @@ async function gradePhoto(file){
     if(out.error) throw new Error(out.error);
 
     const lines = (out.lines || []).map(l => l.text);
-    const reads = alignLines(order.map(o => o.text), lines);
+    const reads = matchLines(order.map(o => o.text), lines);
     let found = 0;
     reads.forEach((read, i) => {
       const {mark, why} = judge(order[i].text, read);
-      if(read !== null) found++;
+      if(read !== null && read !== '?') found++;
       marks[i] = mark;
       showRead(i, read, why);
     });
     paintMarks();
     updateScore();
+    showLeftover(reads.leftover);
     barEnd();
     state.textContent = found === order.length
       ? '다 읽었어요. 잘못 본 곳이 있으면 ⭕❌ 를 눌러 고쳐 주세요.'
-      : `열 줄 가운데 ${found}줄을 찾았어요. 못 찾은 줄은 직접 채점해 주세요.`;
+      : `열 줄 가운데 ${found}줄을 읽었어요. 사진에 열 줄이 다 보이는지 확인하고 다시 찍어 보세요.`;
   }catch(e){
     barEnd();
     state.textContent = '채점하지 못했어요 — ' + e.message;
@@ -744,6 +766,15 @@ function showRead(i, read, why){
       (why ? `<span class="miss">${why}</span>` : '');
   }
   body.insertBefore(box, body.querySelector('.ans-tools'));
+}
+
+/* 어느 문장에도 붙이지 못한 줄은 숨기지 말고 보여 준다. 사람이 보면 금방 안다. */
+function showLeftover(list){
+  const box = document.getElementById('photoLeft');
+  if(!list || !list.length){ box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.innerHTML = '<span class="lab">어느 문장인지 못 맞춘 줄이에요</span>' +
+    list.map(t => `<span class="left-line">${t}</span>`).join('');
+  box.classList.remove('hidden');
 }
 
 function paintMarks(){

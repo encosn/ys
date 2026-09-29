@@ -560,8 +560,8 @@ function updateScore(){
 }
 
 /* ---------- 사진으로 채점하기 ---------- */
-/* 중계 서버 주소. 배포한 뒤 여기에 주소를 적으면 사진 채점 단추가 나타난다. */
-let OCR_SERVER = '';
+/* 중계 서버 주소. 비워 두면 사진 채점 단추가 나타나지 않는다. */
+let OCR_SERVER = 'https://ys-ocr.ocr-server.workers.dev';
 
 const PUNCT = /[.,!?~·…"'‘’“”]/g;
 function norm(s){ return s.replace(PUNCT,'').replace(/\s+/g,' ').trim(); }

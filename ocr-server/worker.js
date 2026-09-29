@@ -3,7 +3,8 @@
 
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 const FORMATS = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
-const DEFAULT_MODEL = 'gemini-3.5-flash';
+// 앞에서부터 쓰고, 그 모델이 붐비면 다음 모델로 넘어간다.
+const DEFAULT_MODELS = 'gemini-3.5-flash,gemini-2.5-flash,gemini-3.5-flash-lite';
 
 // 아이가 틀리게 쓴 글자를 AI가 알아서 고쳐 버리면 채점이 뜻을 잃는다.
 // 그래서 '보이는 그대로' 옮기라는 점을 거듭 못박는다.
@@ -67,35 +68,45 @@ export default {
     if (!FORMATS[format]) return reply({ error: '지원하지 않는 사진 형식입니다.' }, 400, cors);
     if (data.length * 0.75 > MAX_IMAGE_BYTES) return reply({ error: '사진이 너무 큽니다.' }, 413, cors);
 
-    const model = env.GEMINI_MODEL || DEFAULT_MODEL;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    const models = (env.GEMINI_MODEL || DEFAULT_MODELS).split(',').map(s => s.trim()).filter(Boolean);
+
+    const payload = JSON.stringify({
+      contents: [{
+        parts: [
+          { text: PROMPT },
+          { inline_data: { mime_type: FORMATS[format], data } }
+        ]
+      }],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: 'application/json',
+        responseSchema: SCHEMA
+      }
+    });
 
     let res;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_KEY },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: PROMPT },
-              { inline_data: { mime_type: FORMATS[format], data } }
-            ]
-          }],
-          generationConfig: {
-            temperature: 0,
-            responseMimeType: 'application/json',
-            responseSchema: SCHEMA
-          }
-        })
-      });
-    } catch {
-      return reply({ error: 'AI 서버에 연결하지 못했습니다.' }, 502, cors);
+    for (const model of models) {
+      try {
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_KEY },
+          body: payload
+        });
+      } catch {
+        return reply({ error: 'AI 서버에 연결하지 못했습니다.' }, 502, cors);
+      }
+      if (res.ok || (res.status !== 503 && res.status !== 500)) break;
     }
 
     if (!res.ok) {
-      const detail = res.status === 429 ? '오늘 무료로 쓸 수 있는 양을 다 썼어요.' : `AI 서버 오류 (${res.status})`;
-      return reply({ error: detail }, 502, cors);
+      if (res.status === 429) return reply({ error: '오늘 무료로 쓸 수 있는 양을 다 썼어요.' }, 502, cors);
+      let why = '';
+      try {
+        const raw = await res.text();
+        try { why = JSON.parse(raw)?.error?.message || raw.slice(0, 300); }
+        catch { why = raw.slice(0, 300); }
+      } catch { /* 본문이 없으면 상태 번호만 알린다 */ }
+      return reply({ error: `AI 서버 오류 (${res.status}) ${why}`.trim() }, 502, cors);
     }
 
     const out = await res.json();

@@ -191,6 +191,26 @@ button{font-family:inherit;cursor:pointer;border:none;}
 .mark{width:52px;height:44px;font-size:22px;border-radius:14px;background:#f1ecf7;color:var(--text-mute);}
 .mark.o.on{background:#d6f5cc;color:#2f8f14;box-shadow:0 3px 0 #8fd97f;}
 .mark.x.on{background:#ffdede;color:#d33b3b;box-shadow:0 3px 0 #ff9a9a;}
+/* ---------- 올린 사진 보기 ---------- */
+.shot-bar{
+  position:sticky;top:0;z-index:5;
+  background:rgba(255,252,247,.96);backdrop-filter:blur(6px);
+  border-radius:0 0 var(--radius) var(--radius);
+  padding:8px 10px 10px;margin:-8px 0 16px;
+  box-shadow:0 8px 20px rgba(120,90,150,.14);
+  text-align:center;
+}
+.shot-bar img{
+  display:block;width:100%;max-height:27vh;object-fit:contain;
+  border-radius:var(--radius-sm);background:#fff;cursor:zoom-in;
+}
+.shot-bar.folded img{display:none;}
+.shot-tools{display:flex;gap:8px;justify-content:center;align-items:center;margin-top:8px;}
+.shot-bar.folded .shot-tools{margin-top:0;}
+.shot-tools button{
+  background:#f1ecf7;color:var(--text-sub);border-radius:999px;padding:8px 18px;font-size:16px;
+}
+
 /* ---------- 사진 채점 ---------- */
 .photo-card{
   background:var(--card);border-radius:var(--radius);
@@ -296,6 +316,13 @@ footer{text-align:center;color:var(--text-mute);font-size:15px;margin-top:40px;}
     <span class="round-tag" id="ansRoundTag"></span>
   </div>
   <div class="stage">
+    <div class="shot-bar hidden" id="shotBar">
+      <img id="shotImg" alt="올린 공책 사진">
+      <div class="shot-tools">
+        <button id="shotFold">사진 접기</button>
+        <button id="shotOpen">크게 보기</button>
+      </div>
+    </div>
     <div class="score-card">
       <div class="big" id="scoreBig">채점해 볼까요?</div>
       <div class="sub" id="scoreSub">맞으면 ⭕, 틀리면 ❌ 를 눌러 보세요.</div>
@@ -584,6 +611,7 @@ function showAnswers(){
   document.getElementById('photoState').textContent = '';
   document.getElementById('photoBar').classList.add('hidden');
   document.getElementById('photoLeft').classList.add('hidden');
+  document.getElementById('shotBar').classList.add('hidden');
   document.getElementById('photoShot').value = '';
   document.getElementById('photoPick').value = '';
   show('screen-answer');
@@ -726,7 +754,19 @@ function barEnd(){
   setTimeout(() => document.getElementById('photoBar').classList.add('hidden'), 700);
 }
 
+/* 올린 사진을 결과 화면 위에 붙여 둔다. AI 가 잘못 읽은 곳을 공책을 꺼내지 않고 바로 견줄 수 있다. */
+let shotUrl = null;
+function showShot(file){
+  if(shotUrl) URL.revokeObjectURL(shotUrl);
+  shotUrl = URL.createObjectURL(file);
+  document.getElementById('shotImg').src = shotUrl;
+  const bar = document.getElementById('shotBar');
+  bar.classList.remove('hidden', 'folded');
+  document.getElementById('shotFold').textContent = '사진 접기';
+}
+
 async function gradePhoto(file){
+  showShot(file);
   const state = document.getElementById('photoState');
   const buttons = [document.getElementById('photoShotBtn'), document.getElementById('photoPickBtn')];
   buttons.forEach(b => b.disabled = true);
@@ -820,6 +860,14 @@ document.addEventListener('keydown', e => {
   if(e.code === 'Space'){ e.preventDefault(); replay(); }
   if(e.code === 'Enter' || e.code === 'ArrowRight'){ e.preventDefault(); nextQ(); }
 });
+
+document.getElementById('shotFold').onclick = () => {
+  const bar = document.getElementById('shotBar');
+  const folded = bar.classList.toggle('folded');
+  document.getElementById('shotFold').textContent = folded ? '사진 보기' : '사진 접기';
+};
+document.getElementById('shotOpen').onclick = () => { if(shotUrl) window.open(shotUrl, '_blank'); };
+document.getElementById('shotImg').onclick = () => { if(shotUrl) window.open(shotUrl, '_blank'); };
 
 [['photoShotBtn','photoShot'], ['photoPickBtn','photoPick']].forEach(([btn, input]) => {
   document.getElementById(btn).onclick = () => document.getElementById(input).click();

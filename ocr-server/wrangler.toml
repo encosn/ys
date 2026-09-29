@@ -3,10 +3,19 @@ main = "worker.js"
 compatibility_date = "2026-09-01"
 
 # 이 주소에서 온 요청만 받아 준다. 연습용으로 쓰는 http://localhost:8777 도 열어 두었다.
-# GEMINI_MODEL 은 무료 등급에서 쓸 수 없다는 답이 오면 gemini-3.5-flash-lite 로 바꾼다.
 [vars]
 ALLOWED_ORIGINS = "https://encosn.github.io,http://localhost:8777"
 GEMINI_MODEL = "gemini-3.5-flash-lite,gemini-3.5-flash,gemini-3.8-flash"
+
+# 구글 호출을 북미(enam)에 고정된 방을 거쳐 보내기 위한 장치.
+# 클라우드플레어가 한국 접속을 홍콩으로 보낼 때가 있는데, 구글은 홍콩을 막는다.
+[[durable_objects.bindings]]
+name = "CALLER"
+class_name = "GeminiCaller"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GeminiCaller"]
 
 # 열쇠는 아래 명령으로 따로 넣는다. 파일에 적지 않는다.
 #   npx wrangler secret put GEMINI_KEY

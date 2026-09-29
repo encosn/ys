@@ -29,6 +29,40 @@ const SCHEMA = {
   required: ['lines']
 };
 
+/* 구글은 홍콩 등 일부 지역에서 오는 요청을 막는다. 클라우드플레어가 한국 접속을
+   홍콩 데이터센터로 보내는 일이 있어, 구글 호출만 북미에 고정한 이 방을 거치게 한다. */
+export class GeminiCaller {
+  async fetch(request) {
+    const { url, key, payload, timeout } = await request.json();
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: payload,
+        signal: AbortSignal.timeout(timeout)
+      });
+    } catch {
+      return Response.json({ failed: true });
+    }
+    return Response.json({ status: res.status, body: await res.text() });
+  }
+}
+
+async function callGemini(env, model, payload) {
+  const room = env.CALLER.get(env.CALLER.idFromName('gemini-nam'), { locationHint: 'enam' });
+  const res = await room.fetch('https://caller/', {
+    method: 'POST',
+    body: JSON.stringify({
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      key: env.GEMINI_KEY,
+      payload,
+      timeout: MODEL_TIMEOUT_MS
+    })
+  });
+  return res.json();
+}
+
 function corsHeaders(origin, env) {
   const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   const hit = origin && allowed.includes(origin) ? origin : null;
@@ -88,42 +122,34 @@ export default {
       }
     });
 
-    let res = null;
+    let answer = null;
     let lateOrBusy = false;
     for (const model of models) {
-      try {
-        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_KEY },
-          body: payload,
-          signal: AbortSignal.timeout(MODEL_TIMEOUT_MS)
-        });
-      } catch {
+      const got = await callGemini(env, model, payload);
+      if (got.failed) {
         // 시간 안에 답이 없으면 다음 모델로 넘어간다.
-        res = null;
         lateOrBusy = true;
         continue;
       }
-      if (res.ok || !TRY_NEXT.includes(res.status)) break;
+      console.log(`colo=${request.cf?.colo} model=${model} status=${got.status}`);  // wrangler tail 로 상태를 본다
+      answer = got;
+      if (got.status === 200 || !TRY_NEXT.includes(got.status)) break;
       lateOrBusy = true;
     }
 
-    if (!res) {
+    if (!answer) {
       return reply({ error: lateOrBusy ? 'AI가 너무 오래 걸려요. 잠시 뒤에 다시 해 보세요.' : 'AI 서버에 연결하지 못했습니다.' }, 502, cors);
     }
 
-    if (!res.ok) {
-      if (res.status === 429) return reply({ error: '오늘 무료로 쓸 수 있는 양을 다 썼어요.' }, 502, cors);
+    if (answer.status !== 200) {
+      if (answer.status === 429) return reply({ error: '오늘 무료로 쓸 수 있는 양을 다 썼어요.' }, 502, cors);
       let why = '';
-      try {
-        const raw = await res.text();
-        try { why = JSON.parse(raw)?.error?.message || raw.slice(0, 300); }
-        catch { why = raw.slice(0, 300); }
-      } catch { /* 본문이 없으면 상태 번호만 알린다 */ }
-      return reply({ error: `AI 서버 오류 (${res.status}) ${why}`.trim() }, 502, cors);
+      try { why = JSON.parse(answer.body)?.error?.message || answer.body.slice(0, 300); }
+      catch { why = (answer.body || '').slice(0, 300); }
+      return reply({ error: `AI 서버 오류 (${answer.status}) ${why}`.trim() }, 502, cors);
     }
 
-    const out = await res.json();
+    const out = JSON.parse(answer.body);
     const text = out?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) return reply({ error: '사진에서 글씨를 찾지 못했습니다.' }, 200, cors);
 

@@ -1,0 +1,11 @@
+name = "ys-ocr"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+# 이 주소에서 온 요청만 받아 준다. 연습용으로 쓰는 http://localhost:8777 도 열어 두었다.
+[vars]
+ALLOWED_ORIGINS = "https://encosn.github.io,http://localhost:8777"
+
+# CLOVA_URL 과 CLOVA_SECRET 은 아래 명령으로 따로 넣는다. 파일에 적지 않는다.
+#   npx wrangler secret put CLOVA_URL
+#   npx wrangler secret put CLOVA_SECRET

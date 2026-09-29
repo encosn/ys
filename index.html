@@ -763,6 +763,18 @@ async function gradePhoto(file){
   buttons.forEach(b => b.disabled = false);
 }
 
+/* AI 는 글자를 한 자씩 떼어 보내 준다. 그대로 보이면 읽기 나쁘니,
+   글자 수가 맞으면 정답의 낱말 길이대로 다시 붙여서 보여 준다. */
+function respace(read, target){
+  const r = tight(read);
+  const words = norm(target).split(' ').map(w => w.replace(PUNCT, '')).filter(Boolean);
+  if(words.reduce((n, w) => n + w.length, 0) !== r.length) return [r];
+  const out = [];
+  let k = 0;
+  for(const w of words){ out.push(r.slice(k, k + w.length)); k += w.length; }
+  return out;
+}
+
 function showRead(i, read, why, mark){
   const body = document.querySelectorAll('.ans-item')[i].querySelector('.ans-body');
   const old = body.querySelector('.read');
@@ -773,9 +785,9 @@ function showRead(i, read, why, mark){
     box.innerHTML = `<span class="miss">🔍 ${why}</span>`;
   }else{
     // 맞은 줄은 띄어쓰기가 달라도 그냥 둔다. 틀린 줄에서만 어긋난 낱말을 짚어 준다.
-    const t = norm(order[i].text).split(' ');
-    const words = norm(read).split(' ').map(w =>
-      `<span class="w${mark === 'x' && !t.includes(w) ? ' bad' : ''}">${w}</span>`).join('');
+    const t = norm(order[i].text).split(' ').map(w => w.replace(PUNCT, ''));
+    const words = respace(read, order[i].text).map((w, k) =>
+      `<span class="w${mark === 'x' && t[k] !== w ? ' bad' : ''}">${w}</span>`).join('');
     box.innerHTML = `<span class="lab">아이가 쓴 글씨</span>${words}`;
   }
   body.insertBefore(box, body.querySelector('.ans-tools'));
@@ -786,7 +798,7 @@ function showLeftover(list){
   const box = document.getElementById('photoLeft');
   if(!list || !list.length){ box.classList.add('hidden'); box.innerHTML = ''; return; }
   box.innerHTML = '<span class="lab">어느 문장인지 못 맞춘 줄이에요</span>' +
-    list.map(t => `<span class="left-line">${t}</span>`).join('');
+    list.map(t => `<span class="left-line">${tight(t)}</span>`).join('');
   box.classList.remove('hidden');
 }
 

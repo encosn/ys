@@ -150,6 +150,22 @@ button{font-family:inherit;cursor:pointer;border:none;}
 }
 .score-card .big{font-size:clamp(38px,9vw,58px);color:#5b4266;line-height:1.2;}
 .score-card .sub{font-size:18px;color:var(--text-sub);}
+.wrong-card{
+  background:#fff4f4;border-radius:var(--radius);
+  padding:24px 22px;margin-bottom:22px;
+  box-shadow:0 8px 0 rgba(0,0,0,.04),0 14px 26px rgba(150,90,90,.10);
+}
+.wrong-card h2{
+  margin:0 0 4px;font-size:clamp(23px,4.8vw,28px);color:#c4453f;text-align:center;
+}
+.wrong-card .ask{margin:0 0 18px;font-size:18px;color:#8a5f5f;text-align:center;}
+.wrong-line{display:flex;gap:12px;align-items:flex-start;margin-top:14px;}
+.wrong-line .no{
+  flex:0 0 auto;width:38px;height:38px;border-radius:12px;background:#ffdede;color:#c4453f;
+  display:flex;align-items:center;justify-content:center;font-size:18px;
+}
+.wrong-line .say{display:flex;flex-wrap:wrap;gap:6px;}
+.wrong-line .say .word{background:#fff;}
 .ans-item{
   background:var(--card);border-radius:var(--radius-sm);
   padding:18px 18px 16px;margin-bottom:14px;
@@ -284,6 +300,7 @@ footer{text-align:center;color:var(--text-mute);font-size:15px;margin-top:40px;}
       <div class="big" id="scoreBig">채점해 볼까요?</div>
       <div class="sub" id="scoreSub">맞으면 ⭕, 틀리면 ❌ 를 눌러 보세요.</div>
     </div>
+    <div class="wrong-card hidden" id="wrongCard"></div>
     <div class="photo-card hidden" id="photoCard">
       <span class="set-lab">📷 공책 사진으로 채점하기</span>
       <input type="file" id="photoShot" accept="image/*" capture="environment" class="hidden">
@@ -581,9 +598,25 @@ function startPhotoOnly(n){
   showAnswers();
 }
 
+/* 틀린 문장만 모아 보여 준다. ⭕❌ 를 고치면 목록도 따라 바뀐다. */
+function showWrongList(){
+  const card = document.getElementById('wrongCard');
+  const wrong = order.filter((_, i) => marks[i] === 'x');
+  if(!wrong.length){ card.classList.add('hidden'); card.innerHTML = ''; return; }
+  card.innerHTML =
+    '<h2>✏️ 틀린 문장이에요</h2>' +
+    '<p class="ask">한 번씩 더 바르게 써 보세요.</p>' +
+    wrong.map((o, k) => {
+      const words = o.text.split(' ').map(w => `<span class="word">${w}</span>`).join('');
+      return `<div class="wrong-line"><span class="no">${k + 1}</span><span class="say">${words}</span></div>`;
+    }).join('');
+  card.classList.remove('hidden');
+}
+
 function updateScore(){
   const done = marks.filter(m => m !== null).length;
   const right = marks.filter(m => m === 'o').length;
+  showWrongList();
   const big = document.getElementById('scoreBig');
   const sub = document.getElementById('scoreSub');
   if(done === 0){
@@ -596,7 +629,7 @@ function updateScore(){
     big.textContent = `${right * 10}점 🎉`;
     sub.textContent = right === marks.length
       ? '열 문장 모두 맞았어요. 정말 잘했어요!'
-      : `${marks.length}개 가운데 ${right}개를 맞혔어요. 틀린 문장은 한 번 더 써 봐요.`;
+      : `${marks.length}개 가운데 ${right}개를 맞혔어요.`;
   }
 }
 

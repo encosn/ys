@@ -628,51 +628,30 @@ function sim(a,b){
   return 1 - lev(a,b)/Math.max(a.length,b.length);
 }
 
-/* 아이는 1번부터 차례대로 썼으니, 읽어 온 줄 수가 문장 수와 같으면 그대로 순서대로 짝짓는다.
-   줄 수가 어긋날 때만 비슷한 정도를 따져 맞춘다. */
+/* 아이가 1번부터 차례대로 쓴다는 보장이 없다. 줄의 자리는 믿지 말고,
+   글자가 닮은 정도만 보고 가장 잘 맞는 줄과 문장을 하나씩 짝지어 나간다. */
 function matchLines(targets, lines){
-  if(lines.length === targets.length) return lines.map(stripNo);
-  return alignLines(targets, lines);
-}
+  const pairs = [];
+  targets.forEach((t, i) => lines.forEach((l, j) => {
+    pairs.push({i, j, s: sim(tight(t), tight(l))});
+  }));
+  pairs.sort((a, b) => b.s - a.s);
 
-function alignLines(targets, lines){
-  const T=targets.length, L=lines.length;
-  const s = targets.map(t => lines.map(l => sim(tight(t), tight(stripNo(l)))));
-  const best = Array.from({length:T+1}, () => new Array(L+1).fill(0));
-  const from = Array.from({length:T+1}, () => new Array(L+1).fill(''));
-  for(let i=1;i<=T;i++){
-    for(let j=1;j<=L;j++){
-      const pick = best[i-1][j-1] + s[i-1][j-1];
-      const skipL = best[i][j-1];
-      const skipT = best[i-1][j];
-      best[i][j] = Math.max(pick, skipL, skipT);
-      from[i][j] = best[i][j]===pick ? 'p' : (best[i][j]===skipL ? 'l' : 't');
-    }
+  const out = new Array(targets.length).fill(null);
+  const taken = new Array(lines.length).fill(false);
+  for(const {i, j, s} of pairs){
+    if(out[i] !== null || taken[j] || s < 0.1) continue;
+    out[i] = lines[j];
+    taken[j] = true;
   }
-  const out = new Array(T).fill(null);
-  const used = new Array(L).fill(false);
-  let i=T, j=L;
-  while(i>0 && j>0){
-    const f = from[i][j];
-    if(f==='p'){
-      // 글씨가 흐리면 닮은 정도가 낮게 나온다. 웬만하면 버리지 말고 짝지어 보여 준다.
-      if(s[i-1][j-1] > 0.15){ out[i-1] = stripNo(lines[j-1]); used[j-1] = true; }
-      i--; j--;
-    }
-    else if(f==='l'){ j--; }
-    else { i--; }
-  }
-  out.leftover = lines.filter((_, k) => !used[k]).map(stripNo);
+  out.leftover = lines.filter((_, j) => !taken[j]);
   return out;
 }
 
-/* 부호는 너그럽게, 띄어쓰기는 보고 채점한다. */
+/* 띄어쓰기와 문장부호는 따지지 않고, 글자가 같은지만 본다. */
 function judge(target, read){
   if(read === null) return {mark:null, why:'사진에서 이 줄을 찾지 못했어요'};
-  if(read === '?') return {mark:null, why:'글씨를 알아보지 못했어요'};
-  if(norm(target) === norm(read)) return {mark:'o', why:''};
-  if(tight(target) === tight(read)) return {mark:'x', why:'띄어쓰기가 달라요'};
-  return {mark:'x', why:''};
+  return {mark: tight(target) === tight(read) ? 'o' : 'x', why:''};
 }
 
 async function toBase64Jpeg(file){
@@ -726,14 +705,16 @@ async function gradePhoto(file){
     const out = await res.json();
     if(out.error) throw new Error(out.error);
 
-    const lines = (out.lines || []).map(l => l.text);
+    const lines = (out.lines || [])
+      .map(l => stripNo(l.text))
+      .filter(t => t && t !== '?');
     const reads = matchLines(order.map(o => o.text), lines);
     let found = 0;
     reads.forEach((read, i) => {
       const {mark, why} = judge(order[i].text, read);
-      if(read !== null && read !== '?') found++;
+      if(read !== null) found++;
       marks[i] = mark;
-      showRead(i, read, why);
+      showRead(i, read, why, mark);
     });
     paintMarks();
     updateScore();
@@ -749,7 +730,7 @@ async function gradePhoto(file){
   buttons.forEach(b => b.disabled = false);
 }
 
-function showRead(i, read, why){
+function showRead(i, read, why, mark){
   const body = document.querySelectorAll('.ans-item')[i].querySelector('.ans-body');
   const old = body.querySelector('.read');
   if(old) old.remove();
@@ -758,12 +739,11 @@ function showRead(i, read, why){
   if(read === null){
     box.innerHTML = `<span class="miss">🔍 ${why}</span>`;
   }else{
+    // 맞은 줄은 띄어쓰기가 달라도 그냥 둔다. 틀린 줄에서만 어긋난 낱말을 짚어 준다.
     const t = norm(order[i].text).split(' ');
-    const r = norm(read).split(' ');
-    const words = r.map((w, k) =>
-      `<span class="w${t[k] === w ? '' : ' bad'}">${w}</span>`).join('');
-    box.innerHTML = `<span class="lab">아이가 쓴 글씨</span>${words}` +
-      (why ? `<span class="miss">${why}</span>` : '');
+    const words = norm(read).split(' ').map(w =>
+      `<span class="w${mark === 'x' && !t.includes(w) ? ' bad' : ''}">${w}</span>`).join('');
+    box.innerHTML = `<span class="lab">아이가 쓴 글씨</span>${words}`;
   }
   body.insertBefore(box, body.querySelector('.ans-tools'));
 }

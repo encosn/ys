@@ -1,8 +1,28 @@
-// 받아쓰기 공책 사진을 CLOVA OCR 로 넘겨 주는 중계 서버.
-// 네이버 열쇠(CLOVA_URL, CLOVA_SECRET)는 이 서버 안에만 있고 학생 화면으로는 나가지 않는다.
+// 받아쓰기 공책 사진에서 글씨를 읽어 주는 중계 서버.
+// 구글 Gemini 열쇠는 이 서버 안에만 있고 학생 화면으로는 나가지 않는다.
 
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
-const FORMATS = ['jpg', 'jpeg', 'png'];
+const FORMATS = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
+const DEFAULT_MODEL = 'gemini-3.5-flash';
+
+// 아이가 틀리게 쓴 글자를 AI가 알아서 고쳐 버리면 채점이 뜻을 잃는다.
+// 그래서 '보이는 그대로' 옮기라는 점을 거듭 못박는다.
+const PROMPT = `이 사진은 초등학교 3학년 학생이 공책에 쓴 받아쓰기입니다.
+위에서부터 한 줄씩, 학생이 쓴 글자를 보이는 그대로 옮겨 적으세요.
+
+지켜야 할 것:
+- 맞춤법이 틀린 글자도 틀린 그대로 옮겨 적으세요. 절대 고치지 마세요.
+- 띄어 쓴 곳은 띄어 쓴 대로, 붙여 쓴 곳은 붙여 쓴 대로 적으세요.
+- 줄 앞에 적힌 번호(1. 2. 등)는 빼고 적으세요.
+- 지우거나 고쳐 쓴 흔적이 있으면 마지막에 남은 글자를 적으세요.
+- 글자를 알아볼 수 없는 줄은 "?" 한 글자만 적으세요.
+- 빈 줄은 건너뛰고, 글씨가 있는 줄만 차례대로 적으세요.`;
+
+const SCHEMA = {
+  type: 'object',
+  properties: { lines: { type: 'array', items: { type: 'string' } } },
+  required: ['lines']
+};
 
 function corsHeaders(origin, env) {
   const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -25,32 +45,6 @@ function reply(body, status, cors) {
   });
 }
 
-/* CLOVA 는 낱말 상자를 차례로 돌려준다. lineBreak 가 켜진 곳에서 줄을 끊어 문장으로 묶는다. */
-function toLines(fields) {
-  const lines = [];
-  let words = [];
-  let scores = [];
-  for (const f of fields || []) {
-    words.push(f.inferText);
-    scores.push(typeof f.inferConfidence === 'number' ? f.inferConfidence : 1);
-    if (f.lineBreak) {
-      lines.push({
-        text: words.join(' ').trim(),
-        confidence: scores.reduce((a, b) => a + b, 0) / scores.length
-      });
-      words = [];
-      scores = [];
-    }
-  }
-  if (words.length) {
-    lines.push({
-      text: words.join(' ').trim(),
-      confidence: scores.reduce((a, b) => a + b, 0) / scores.length
-    });
-  }
-  return lines.filter(l => l.text);
-}
-
 export default {
   async fetch(request, env) {
     const cors = corsHeaders(request.headers.get('Origin'), env);
@@ -58,9 +52,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors.headers });
     if (request.method !== 'POST') return reply({ error: 'POST 로만 받습니다.' }, 405, cors);
     if (!cors.allowed) return reply({ error: '허락되지 않은 주소에서 온 요청입니다.' }, 403, cors);
-    if (!env.CLOVA_URL || !env.CLOVA_SECRET) {
-      return reply({ error: '서버에 네이버 OCR 열쇠가 아직 설정되지 않았습니다.' }, 500, cors);
-    }
+    if (!env.GEMINI_KEY) return reply({ error: '서버에 열쇠가 아직 설정되지 않았습니다.' }, 500, cors);
 
     let body;
     try {
@@ -72,35 +64,56 @@ export default {
     const format = String(body.format || 'jpg').toLowerCase();
     const data = body.data;
     if (!data || typeof data !== 'string') return reply({ error: '사진이 없습니다.' }, 400, cors);
-    if (!FORMATS.includes(format)) return reply({ error: '지원하지 않는 사진 형식입니다.' }, 400, cors);
+    if (!FORMATS[format]) return reply({ error: '지원하지 않는 사진 형식입니다.' }, 400, cors);
     if (data.length * 0.75 > MAX_IMAGE_BYTES) return reply({ error: '사진이 너무 큽니다.' }, 413, cors);
+
+    const model = env.GEMINI_MODEL || DEFAULT_MODEL;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     let res;
     try {
-      res = await fetch(env.CLOVA_URL, {
+      res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-OCR-SECRET': env.CLOVA_SECRET },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_KEY },
         body: JSON.stringify({
-          version: 'V2',
-          requestId: crypto.randomUUID(),
-          timestamp: Date.now(),
-          lang: 'ko',
-          images: [{ format, name: 'dictation', data }]
+          contents: [{
+            parts: [
+              { text: PROMPT },
+              { inline_data: { mime_type: FORMATS[format], data } }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0,
+            responseMimeType: 'application/json',
+            responseSchema: SCHEMA
+          }
         })
       });
     } catch {
-      return reply({ error: '네이버 OCR 에 연결하지 못했습니다.' }, 502, cors);
+      return reply({ error: 'AI 서버에 연결하지 못했습니다.' }, 502, cors);
     }
 
     if (!res.ok) {
-      return reply({ error: `네이버 OCR 오류 (${res.status})` }, 502, cors);
+      const detail = res.status === 429 ? '오늘 무료로 쓸 수 있는 양을 다 썼어요.' : `AI 서버 오류 (${res.status})`;
+      return reply({ error: detail }, 502, cors);
     }
 
     const out = await res.json();
-    const image = out.images && out.images[0];
-    if (!image || image.inferResult !== 'SUCCESS') {
-      return reply({ error: '사진에서 글씨를 찾지 못했습니다.' }, 200, cors);
+    const text = out?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return reply({ error: '사진에서 글씨를 찾지 못했습니다.' }, 200, cors);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return reply({ error: '읽은 결과를 이해하지 못했습니다.' }, 502, cors);
     }
-    return reply({ lines: toLines(image.fields) }, 200, cors);
+
+    const lines = (parsed.lines || [])
+      .map(s => String(s).trim())
+      .filter(s => s && s !== '?')
+      .map(text => ({ text, confidence: 1 }));
+
+    return reply({ lines }, 200, cors);
   }
 };
